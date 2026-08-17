@@ -1,0 +1,14 @@
+# Extension signing key — whoever holds this can publish updates that Chrome
+# will accept as genuine. Never commit it. Back it up somewhere private.
+*.pem
+
+# Build output
+dist/
+*.crx
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>JDG Clockwork</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span>
+    <div class="ttl">
+      <strong>Clockwork</strong>
+      <span id="sub">reading your day…</span>
+    </div>
+    <button class="ghost" id="refresh" title="Re-read the portal">⟳</button>
+  </header>
+
+  <section id="today" class="today">
+    <div class="skeleton"></div>
+  </section>
+
+  <section class="actions">
+    <button class="primary" id="insights">Open Insights</button>
+    <button id="portal">Portal</button>
+  </section>
+
+  <details id="settingsBox">
+    <summary>Settings</summary>
+    <div class="settings">
+      <div class="grouphdr" style="margin-top:0;padding-top:0;border-top:0">In the portal</div>
+      <label class="row"><input type="checkbox" id="chipEnabled"><span>Readout in the top bar</span></label>
+      <label class="row"><input type="checkbox" id="dashboardCards"><span>Today panel on the dashboard</span></label>
+      <label class="row"><input type="checkbox" id="calendarMarks"><span>Mark late days on the calendar</span></label>
+      <label class="row"><input type="checkbox" id="attendanceEnrich"><span>Month summary + vs-8h column</span></label>
+      <label class="row"><input type="checkbox" id="hudEnabled"><span>Floating HUD panel</span></label>
+
+      <div class="grouphdr">One-click pause</div>
+      <label class="row"><input type="checkbox" id="oneClickPause"><span>Pause button that picks the reason</span></label>
+      <label>
+        <span>Lunch break from</span>
+        <input type="time" id="lunchFrom">
+      </label>
+      <label>
+        <span>Lunch break until</span>
+        <input type="time" id="lunchUntil">
+      </label>
+      <label>
+        <span>Clock out from</span>
+        <input type="time" id="clockOutFrom">
+      </label>
+      <label>
+        <span>Half day — leave from</span>
+        <input type="time" id="halfDayOutFrom">
+      </label>
+      <p class="fine">Before lunch and after it, a pause is logged as SMALL BREAK. Clocking out always
+        asks for confirmation first.</p>
+
+      <div class="grouphdr">Appearance</div>
+      <label>
+        <span>Theme</span>
+        <select id="theme">
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+          <option value="auto">Match system</option>
+        </select>
+      </label>
+
+      <div class="grouphdr">Your shift</div>
+      <label>
+        <span>Shift starts</span>
+        <input type="time" id="shiftStart">
+      </label>
+      <label>
+        <span>Full day (hours)</span>
+        <input type="number" id="requiredHours" min="1" max="16" step="0.25">
+      </label>
+      <label>
+        <span>Grace before "Late" (min)</span>
+        <input type="number" id="grace" min="0" max="120" step="1">
+      </label>
+      <label>
+        <span>Warn on breaks over (min)</span>
+        <input type="number" id="breakWarn" min="5" max="180" step="5">
+      </label>
+      <label>
+        <span>Morning nudges (min before)</span>
+        <input type="text" id="leads" placeholder="30, 15, 5">
+      </label>
+
+      <div class="grouphdr">Nudges</div>
+      <label class="row"><input type="checkbox" id="guardEarlyExit"><span>Block clock-outs under a full day</span></label>
+      <label class="row"><input type="checkbox" id="morningAlarms"><span>Pre-shift notifications</span></label>
+      <label class="row"><input type="checkbox" id="notifyTargetReached"><span>Tell me when a full day is cleared</span></label>
+
+      <p class="fine" id="calNote"></p>
+      <button class="ghost wide" id="recal">Re-detect shift times from my record</button>
+    </div>
+  </details>
+
+  <footer>
+    <span id="stamp">—</span>
+    <span class="spacer"></span>
+    <span class="fine">reads only your own attendance</span>
+  </footer>
+
+  <script src="../lib/portal.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

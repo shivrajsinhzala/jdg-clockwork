@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JDG Clockwork — portal injection harness</title>
+<style>
+  /* A stand-in for the Rubick template: same classes, same look, minimal CSS. */
+  body { background:#f1f5f9; color:#2d3748; font:14px/1.5 Roboto,"Segoe UI",system-ui,sans-serif; margin:0; }
+  .wrapper { padding:0; }
+  .content { padding:20px 26px 60px; max-width:1180px; margin:0 auto; }
+  .top-bar { display:flex; align-items:center; padding:14px 0 18px; }
+  .breadcrumb { font-size:13px; color:#64748b; }
+  .mr-auto { margin-right:auto; }
+  .intro-x { display:inline-flex; align-items:center; }
+  .mr-4 { margin-right:16px; }
+  .grid { display:grid; }
+  .grid-cols-12 { grid-template-columns:repeat(12,1fr); }
+  .gap-6 { gap:24px; }
+  .col-span-12 { grid-column:span 12; }
+  .box { background:#fff; border-radius:6px; box-shadow:0 3px 20px rgba(0,0,0,.043); }
+  .p-5 { padding:20px; }
+  .report-box .box { padding:20px; }
+  .att-table-card { background:#fff; border-radius:6px; box-shadow:0 3px 20px rgba(0,0,0,.043); padding:18px 20px; }
+  .att-table-card table { width:100%; border-collapse:collapse; font-size:13px; }
+  .att-table-card th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+                       color:#94a3b8; padding:9px 8px; border-bottom:1px solid #e6ebf2; }
+  .att-table-card th.tc, .att-table-card td.tc { text-align:center; }
+  .att-table-card td { padding:10px 8px; border-bottom:1px solid #f1f5f9; }
+  .att-badge { display:inline-block; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:600; }
+  .att-badge-present { background:#ecfdf5; color:#047857; }
+  .att-badge-holiday { background:#f1f5f9; color:#64748b; }
+  .att-badge-early { background:#fffbeb; color:#b45309; }
+  .att-avatar { width:28px; height:28px; border-radius:50%; background:#e2e8f0; display:grid; place-items:center; font-size:10px; font-weight:700; color:#475569; }
+  .att-name-cell { display:flex; align-items:center; gap:9px; }
+  .att-pagination-row { display:flex; gap:6px; margin-top:14px; }
+  .att-pagination-row button { border:1px solid #e6ebf2; background:#fff; border-radius:6px; padding:5px 11px; cursor:pointer; }
+  .att-pagination-row button.active { background:#0369a1; color:#fff; border-color:#0369a1; }
+  .fc { background:#fff; border-radius:6px; box-shadow:0 3px 20px rgba(0,0,0,.043); padding:16px; }
+  .fc-daygrid-body { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
+  .fc-daygrid-day-frame { border:1px solid #f1f5f9; border-radius:5px; min-height:56px; padding:5px; }
+  .fc-daygrid-day-number { font-size:12px; color:#64748b; }
+  .harness { position:fixed; top:0; left:0; right:0; background:#0f172a; color:#e2e8f0;
+             padding:7px 14px; font-size:12px; z-index:9999; display:flex; gap:10px; align-items:center; }
+  .harness a { color:#7dd3fc; text-decoration:none; }
+  .harness a.on { color:#fff; font-weight:700; }
+  .pusher { height:34px; }
+</style>
+</head>
+<body class="main">
+  <div class="harness">
+    <strong>Injection harness</strong>
+    <a href="#dashboard">/dashboard</a>
+    <a href="#attendance">/attendance</a>
+    <a href="#holiday">/holiday</a>
+    <span id="hnote" style="color:#94a3b8"></span>
+  </div>
+  <div class="pusher"></div>
+
+  <div class="wrapper"><div class="flex"><div class="content">
+    <div class="top-bar items-center">
+      <div class="-intro-x breadcrumb mr-auto">
+        <div class="flex items-center gap-2 mr-4"><a class="btn btn-warning" href="#">Pause</a></div>
+      </div>
+      <div class="intro-x mr-4"><button>Alerts</button></div>
+      <div class="intro-x dropdown"><button>Shivrajsinh Zala</button></div>
+    </div>
+    <div id="page"></div>
+
+    <!-- the portal's own pause / clock-out forms, as rendered while clocked in -->
+    <form action="https://team.justdigitalgurus.com/attendance/clock-pause" method="POST" style="display:none">
+      <input type="hidden" name="_token" value="harness">
+      <select name="pause_massage">
+        <option value="">Select Message</option>
+        <option value="BREAK TIME">BREAK TIME</option>
+        <option value="SMALL BREAK">SMALL BREAK</option>
+        <option value="LEAVING FOR HOME">LEAVING FOR HOME</option>
+        <option value="other">Other</option>
+      </select>
+      <textarea name="pause_massage_other"></textarea>
+    </form>
+    <form action="https://team.justdigitalgurus.com/attendance/clockout" method="POST" style="display:none">
+      <input type="hidden" name="_token" value="harness">
+    </form>
+  </div></div></div>
+
+  <script>
+    // Pretend to be the portal route the harness is testing.
+    var route = (location.hash || '#dashboard').slice(1);
+    // Keep the query string: the harness's own flags (?halfday) live there, and
+    // the attendance page reads ?month/?year from it.
+    history.replaceState({}, '', '/' + route + location.search);
+    document.getElementById('hnote').textContent = 'pathname is now ' + location.pathname;
+    document.querySelectorAll('.harness a').forEach(function (a) {
+      if (a.hash === '#' + route) a.className = 'on';
+      a.addEventListener('click', function (e) {
+        e.preventDefault();
+        location.href = '/test/portal.html' + a.hash;
+        location.reload();
+      });
+    });
+  </script>
+
+  <script src="/test/stub.js"></script>
+  <script src="/src/lib/portal.js"></script>
+  <script src="/src/content/styles.js"></script>
+  <script src="/src/content/charts.js"></script>
+  <script src="/src/content/insights.js"></script>
+  <script src="/test/fixture.js"></script>
+
+  <script>
+  (function () {
+    var J = window.JDG;
+    var days = window.hydrate(window.FIXTURE_ROWS);
+    var today = days[days.length - 1];
+
+    // Point the real sources at the fixture before the pump starts.
+    J.fetchMonth = function (month, year) {
+      var tag = '-' + (month < 10 ? '0' + month : month) + '-' + year;
+      return Promise.resolve({
+        loggedOut: false,
+        days: days.filter(function (d) { return d.date.indexOf(tag) === 2; })
+      });
+    };
+    J.fetchToday = function () {
+      return Promise.resolve({
+        loggedOut: false, row: today, segments: window.FIXTURE_SEGMENTS,
+        month: days.filter(function (d) { return d.date.indexOf('-08-2026') === 2; })
+      });
+    };
+    // The real 2026 holiday list, as the portal renders it.
+    var HOLIDAY_HTML =
+      [['Makar Sankranti', '14 Jan 2026'], ['Maha Shivratri', '15 Feb 2026'],
+       ['Dhuleti', '04 Mar 2026'], ['Rakshabandhan', '28 Aug 2026'],
+       ['Janmashtami', '04 Sep 2026 – 06 Sep 2026'], ['Dusshera', '20 Oct 2026'],
+       ['Diwali', '07 Nov 2026 – 09 Nov 2026']]
+      .map(function (h) {
+        return '<div class="hol-item"><div class="hol-dot"></div><div>' +
+          '<span class="hol-name">' + h[0] + '</span>' +
+          '<div class="hol-dates">' + h[1] + '</div></div></div>';
+      }).join('');
+    J.fetchHolidays = function (year) {
+      return Promise.resolve(year === 2026
+        ? J.parseHolidaysHTML(HOLIDAY_HTML)
+        : { loggedOut: false, holidays: [] });
+    };
+    // ?halfday puts an approved 0.5-day leave on today.
+    var HALF = /(\?|&)halfday/.test(location.search);
+    J.fetchLeave = function () {
+      return Promise.resolve({
+        loggedOut: false,
+        leaves: HALF
+          ? [{ from: J.isoToday(), to: J.isoToday(), kind: 'medical leave', paid: 'paid', days: 0.5,
+               status: '✓ Approved', approved: true }]
+          : []
+      });
+    };
+
+    // Record submits instead of navigating, so the harness can assert on them.
+    window.__submitted = [];
+    HTMLFormElement.prototype.submit = function () {
+      var data = {};
+      [].slice.call(this.elements).forEach(function (e) { if (e.name) data[e.name] = e.value; });
+      window.__submitted.push({ action: this.getAttribute('action'), data: data });
+    };
+
+    var route = location.pathname.replace('/', '');
+    var page = document.getElementById('page');
+
+    if (route === 'dashboard') {
+      page.innerHTML =
+        '<div class="grid grid-cols-12 gap-6">' +
+        ['Total Day Present|9', 'Total Day Absent|0', 'Total HalfDay|0', 'Total Paid Holiday|8']
+          .map(function (s) {
+            var p = s.split('|');
+            return '<div class="col-span-12 sm:col-span-6 xl:col-span-4 xxl:col-span-3 intro-y" style="grid-column:span 3">' +
+              '<div class="report-box zoom-in"><div class="box p-5">' +
+              '<div style="font-size:26px;font-weight:700">' + p[1] + '</div>' +
+              '<div style="font-size:12px;color:#64748b">' + p[0] + '</div>' +
+              '</div></div></div>';
+          }).join('') +
+        '</div>' +
+        '<div style="margin-top:24px" class="fc"><div class="fc-toolbar"><h2 class="fc-toolbar-title">August 2026</h2></div>' +
+        '<div class="fc-view-harness"><div class="fc-daygrid-body">' +
+        (function () {
+          var out = '';
+          for (var i = 1; i <= 31; i++) {
+            var iso = '2026-08-' + (i < 10 ? '0' + i : i);
+            out += '<div class="fc-daygrid-day" data-date="' + iso + '">' +
+              '<div class="fc-daygrid-day-frame"><div class="fc-daygrid-day-number">' + i + '</div></div></div>';
+          }
+          return out;
+        })() +
+        '</div></div></div>';
+    } else if (route === 'holiday') {
+      page.innerHTML = '<div class="box p-5"><h2 style="margin:0 0 14px;font-size:16px">Holiday List</h2>' +
+        HOLIDAY_HTML + '</div>';
+    } else {
+      var aug = days.filter(function (d) { return d.date.indexOf('-08-2026') === 2; });
+      page.innerHTML =
+        '<div class="att-table-card">' +
+        '<table><thead><tr>' +
+        ['Name', 'Date', 'Clock In', 'Clock Out', 'Late By', 'Total Hour', 'Status']
+          .map(function (h, i) { return '<th class="sortable' + (i >= 2 ? ' tc' : '') + '">' + h + '</th>'; }).join('') +
+        '</tr></thead><tbody>' +
+        aug.slice(0, 10).map(function (d) {
+          var badge = /present/i.test(d.status) ? 'att-badge-present' : 'att-badge-holiday';
+          return '<tr>' +
+            '<td><div class="att-name-cell"><div class="att-avatar">SZ</div><div>Shivrajsinh Zala</div></div></td>' +
+            '<td><span class="att-name-muted">' + d.date + '</span></td>' +
+            '<td class="tc">' + (d.clockIn != null ? J.fmtClock(d.clockIn) : '') +
+            (d.hardLate ? ' <span style="background:#dc2626;color:#fff;padding:1px 7px;border-radius:4px;font-size:11px">Late</span>' : '') + '</td>' +
+            '<td class="tc">' + (d.clockOut != null ? J.fmtClock(d.clockOut) : '') + '</td>' +
+            '<td class="tc">' + (d.lateBy ? '00:' + (d.lateBy < 10 ? '0' + d.lateBy : d.lateBy) : '00:00') + '</td>' +
+            '<td class="tc">' + (d.total != null ? J.fmtDurShort(d.total) : '') +
+            (d.earlyExit ? ' <span class="att-badge att-badge-early">⚡ Early Exit</span>' : '') + '</td>' +
+            '<td class="tc" data-status="' + d.status.toLowerCase() + '"><span class="att-badge ' + badge + '">' + d.status + '</span></td>' +
+            '</tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<div class="att-pagination-row" id="attendanceUserPagination"><button class="active">1</button><button>2</button></div>' +
+        '</div>' +
+        '<form action="https://team.justdigitalgurus.com/attendance/clockout" method="POST" style="margin-top:20px">' +
+        '<button type="submit" class="jdgc-btn">Simulate: Yes, Clock Out</button></form>';
+    }
+
+    var bust = String(Date.now());   // the harness must never serve a stale build
+    ['/src/content/pump.js', '/src/content/portal-ui.js',
+     '/src/content/extras.js', '/src/content/hud.js'].forEach(function (src) {
+      var sc = document.createElement('script');
+      sc.async = false;
+      sc.src = src + '?t=' + bust;
+      document.body.appendChild(sc);
+    });
+  })();
+  </script>
+</body>
+</html>

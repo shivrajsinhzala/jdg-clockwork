@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JDG Clockwork — popup harness</title>
+<style>
+  body { background:#0b1219; margin:0; padding:24px; font:13px "Inter","Segoe UI",system-ui,sans-serif; color:#8fa3b8; }
+  h1 { font-size:14px; color:#e6edf5; margin:0 0 4px; }
+  .sub { font-size:12px; color:#63788f; margin-bottom:16px; }
+  #frame { width:322px; border:1px solid #263647; border-radius:12px; overflow:hidden; }
+  .state { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .state button { background:#1d2b3a; color:#8fa3b8; border:1px solid #263647; padding:6px 11px;
+                  border-radius:8px; font:inherit; font-size:11.5px; cursor:pointer; }
+  .state button:hover { color:#e6edf5; }
+</style>
+</head>
+<body>
+  <h1>Popup harness</h1>
+  <div class="sub">Renders the real popup against a stubbed mirror. Pick a state to preview.</div>
+  <div class="state">
+    <button data-s="working">working</button>
+    <button data-s="break">on break</button>
+    <button data-s="not-clocked-in-early">before shift</button>
+    <button data-s="not-clocked-in-late">late, not in</button>
+    <button data-s="done-short">clocked out short</button>
+    <button data-s="done-ok">clocked out full</button>
+    <button data-s="holiday">rest day</button>
+  </div>
+  <div id="frame"></div>
+
+  <script src="stub.js"></script>
+  <script>
+  (function () {
+    var base = { ts: Date.now(), shiftStart: 480, graceMinutes: 16, requiredMinutes: 480, status: 'Present' };
+    function dmy() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+      return p(d.getDate()) + '-' + p(d.getMonth() + 1) + '-' + d.getFullYear(); }
+
+    var STATES = {
+      'working':              { state:'working', clockIn:507, clockOut:null, lateBy:27, hardLate:true,  worked:347, breaks:38, breakSoFar:0,  remaining:133, targetOut:1025 },
+      'break':                { state:'break',   clockIn:507, clockOut:null, lateBy:27, hardLate:true,  worked:324, breaks:38, breakSoFar:19, remaining:156, targetOut:null },
+      'not-clocked-in-early': { state:'not-clocked-in', clockIn:null, clockOut:null, lateBy:0, hardLate:false, worked:0, breaks:0, breakSoFar:0, remaining:480, targetOut:null },
+      'not-clocked-in-late':  { state:'not-clocked-in', clockIn:null, clockOut:null, lateBy:0, hardLate:false, worked:0, breaks:0, breakSoFar:0, remaining:480, targetOut:null },
+      'done-short':           { state:'done',    clockIn:506, clockOut:1056, lateBy:26, hardLate:true,  worked:461, breaks:89, breakSoFar:0, remaining:19, targetOut:null },
+      'done-ok':              { state:'done',    clockIn:494, clockOut:1070, lateBy:14, hardLate:false, worked:536, breaks:40, breakSoFar:0, remaining:0,  targetOut:null },
+      'holiday':              { state:'off',     clockIn:null, clockOut:null, lateBy:0, hardLate:false, worked:0, breaks:0, breakSoFar:0, remaining:480, targetOut:null, status:'Paid holiday', isHoliday:true }
+    };
+
+    function load(name) {
+      var m = {}; for (var k in base) m[k] = base[k];
+      var st = STATES[name]; for (var j in st) m[j] = st[j];
+      m.date = dmy();
+      m.isHoliday = !!st.isHoliday;
+      // "before shift" needs the clock to read as morning; fake it via shiftStart.
+      var now = new Date().getHours() * 60 + new Date().getMinutes();
+      if (name === 'not-clocked-in-early') m.shiftStart = now + 23;
+      if (name === 'not-clocked-in-late') m.shiftStart = now - 12;
+
+      chrome.storage.local.set({ today: m, settings: {} }, function () {
+        fetch('../src/popup/popup.html').then(function (r) { return r.text(); }).then(function (html) {
+          var doc = new DOMParser().parseFromString(html, 'text/html');
+          var frame = document.getElementById('frame');
+          frame.innerHTML = '<link rel="stylesheet" href="../src/popup/popup.css">' + doc.body.innerHTML;
+          frame.querySelectorAll('script').forEach(function (s) { s.remove(); });
+          // async=false keeps injected scripts in insertion order, matching the
+          // static <script> tags the real popup uses.
+          ['../src/lib/portal.js', '../src/popup/popup.js'].forEach(function (src) {
+            var sc = document.createElement('script');
+            sc.async = false;
+            sc.src = src + '?t=' + Date.now();
+            document.body.appendChild(sc);
+          });
+        });
+      });
+    }
+
+    document.querySelectorAll('.state button').forEach(function (b) {
+      b.onclick = function () { location.hash = b.dataset.s; location.reload(); };
+    });
+    load((location.hash || '#working').slice(1));
+    window.__loadState = load;
+  })();
+  </script>
+</body>
+</html>
