@@ -95,11 +95,19 @@ $crx = Join-Path $dist 'jdg-clockwork.crx'
 Move-Item $crxOut $crx -Force
 Good "packed $([math]::Round((Get-Item $crx).Length / 1KB)) KB -> dist\jdg-clockwork.crx"
 
+# From here on the script drives native tools (openssl, git, gh) that all write
+# progress to stderr. Windows PowerShell turns native stderr into an ErrorRecord,
+# and with ErrorActionPreference=Stop that aborts the run on "writing RSA key" or
+# "* [new branch]". Success is checked explicitly below - by exit code for git and
+# gh, and by the file actually existing for openssl.
+$ErrorActionPreference = 'Continue'
+
 # --------------------------------------------------------------- 2. extension id
 # Chrome's ID is the first 16 bytes of the SHA-256 of the DER public key, with
 # each hex nibble mapped 0-f onto a-p.
 $der = Join-Path $env:TEMP 'jdg-clockwork-pub.der'
-& $openssl rsa -in $key -pubout -outform DER -out $der 2>$null
+if (Test-Path $der) { Remove-Item $der -Force }
+& $openssl rsa -in $key -pubout -outform DER -out $der 2>&1 | Out-Null
 if (-not (Test-Path $der)) { Fail 'Could not export the public key with openssl.' }
 
 $sha = (Get-FileHash $der -Algorithm SHA256).Hash.Substring(0, 32).ToLower()
@@ -110,8 +118,11 @@ $extId = -join ($sha.ToCharArray() | ForEach-Object {
 Good "extension id $extId"
 
 # ------------------------------------------------------------------ 3. manifests
-try { $ghUser = (gh api user --jq .login 2>$null) } catch { $ghUser = $null }
-if (-not $ghUser) { Fail 'gh is not authenticated. Run:  gh auth login' }
+# @(...) drains the pipeline, so $LASTEXITCODE is the real exit code.
+# Piping to Select-Object -First 1 instead stops it early and reports -1.
+$ghUserRaw = @(gh api user --jq .login 2>&1)
+if ($LASTEXITCODE -ne 0 -or $ghUserRaw.Count -eq 0) { Fail 'gh is not authenticated. Run:  gh auth login' }
+$ghUser = "$($ghUserRaw[0])".Trim()
 
 $repoUrl    = "https://github.com/$ghUser/$RepoName"
 $assetBase  = "$repoUrl/releases/latest/download"
@@ -126,7 +137,11 @@ $updatesXml = @"
   </app>
 </gupdate>
 "@
-Set-Content -Path (Join-Path $dist 'updates.xml') -Value $updatesXml -Encoding utf8
+# No BOM. Set-Content -Encoding utf8 writes one in Windows PowerShell, and a
+# leading U+FEFF makes `iwr ... | iex` fail to parse the installer and can upset
+# Chrome's XML reader.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText((Join-Path $dist 'updates.xml'), $updatesXml, $utf8NoBom)
 Good 'wrote dist\updates.xml'
 
 $installer = Get-Content (Join-Path $PSScriptRoot 'install-template.ps1') -Raw
@@ -134,8 +149,14 @@ $installer = $installer.Replace('{{EXT_ID}}', $extId)
 $installer = $installer.Replace('{{UPDATE_URL}}', $updateUrl)
 $installer = $installer.Replace('{{REPO_URL}}', $repoUrl)
 $installer = $installer.Replace('{{INSTALL_URL}}', $installUrl)
-Set-Content -Path (Join-Path $dist 'install-jdg-clockwork.ps1') -Value $installer -Encoding utf8
-Good 'wrote dist\install-jdg-clockwork.ps1'
+[System.IO.File]::WriteAllText((Join-Path $dist 'install-jdg-clockwork.ps1'), $installer, $utf8NoBom)
+
+# The installer is delivered through `iex`, so a syntax error would only surface
+# on a colleague's machine. Catch it here instead.
+$perr = $null; $ptok = $null
+[System.Management.Automation.Language.Parser]::ParseInput($installer, [ref]$ptok, [ref]$perr) | Out-Null
+if ($perr.Count -gt 0) { Fail "generated installer does not parse: $($perr[0].Message)" }
+Good 'wrote dist\install-jdg-clockwork.ps1 (parses clean)'
 
 if ($SkipPublish) {
     Write-Host ''
@@ -145,15 +166,17 @@ if ($SkipPublish) {
 }
 
 # --------------------------------------------------------------------- 4. publish
-$remote = (git remote get-url origin 2>$null)
-if (-not $remote) {
+# Judged by the shape of the URL rather than git's exit code, for the same reason.
+$remoteRaw = @(git remote get-url origin 2>&1)
+$remote = if ($remoteRaw.Count) { "$($remoteRaw[0])".Trim() } else { '' }
+if ($remote -notmatch '^(https?://|git@)') {
     Step "creating $Visibility repo $ghUser/$RepoName"
-    gh repo create $RepoName --$Visibility --source=. --remote=origin --push
-    if ($LASTEXITCODE -ne 0) { Fail 'gh repo create failed.' }
+    gh repo create $RepoName --$Visibility --source=. --remote=origin --push 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "gh repo create failed. If the name is taken, add the remote yourself and rerun." }
 }
 else {
     Step "pushing to $remote"
-    git push -u origin main
+    git push -u origin main 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail 'git push failed.' }
 }
 Good 'pushed'
@@ -171,14 +194,14 @@ Restart Chrome afterwards. To remove it later, save that script and run it with 
 Extension ID: ``$extId``
 "@
 
-gh release view $tag *> $null
+gh release view $tag 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 0) {
     Step "release $tag exists - replacing its assets"
-    gh release upload $tag "$dist\jdg-clockwork.crx" "$dist\updates.xml" "$dist\install-jdg-clockwork.ps1" --clobber
+    gh release upload $tag "$dist\jdg-clockwork.crx" "$dist\updates.xml" "$dist\install-jdg-clockwork.ps1" --clobber 2>&1 | Out-Null
 }
 else {
     gh release create $tag "$dist\jdg-clockwork.crx" "$dist\updates.xml" "$dist\install-jdg-clockwork.ps1" `
-        --title "JDG Clockwork $version" --notes $notes
+        --title "JDG Clockwork $version" --notes $notes 2>&1 | Out-Null
 }
 if ($LASTEXITCODE -ne 0) { Fail 'gh release failed.' }
 
