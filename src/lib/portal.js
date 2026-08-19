@@ -43,6 +43,17 @@
     clockOutFrom: 17 * 60,     // from here the button clocks out instead
     halfDayOutFrom: 12 * 60,   // on an approved half day, leave from here
 
+    /* Lunch is a fixed fixture of the day, so a leaving time worked out before
+       lunch has to allow for it. Small breaks are not predictable and are never
+       assumed — only counted once actually taken. */
+    lunchWindowStart: 13 * 60 + 20,
+    lunchWindowEnd: 14 * 60 + 45,
+    expectedLunchMinutes: 55,
+
+    /* JDG does not pay overtime, so extra time is reported as a plain fact
+       rather than as a balance being accrued. */
+    treatOvertimeAsBanked: false,
+
     version: 2                 // settings schema; see migrate()
   };
 
@@ -174,6 +185,90 @@
     });
   }
 
+  /* ------------------------------------------------------------- caching --- */
+  /*
+   * The portal is server-rendered HTML, so every panel used to cost its own
+   * round trip and a full parse — about ten requests per page load before
+   * anything appeared. Results are memoised for the life of the page, shared
+   * between in-flight callers, and persisted in chrome.storage so a second page
+   * load usually needs no network at all.
+   */
+
+  var _memo = {};       // key -> { ts, v } for this page
+  var _inflight = {};   // key -> promise, so two panels asking at once cost one fetch
+
+  var TTL = {
+    pastMonth: 7 * 24 * 60 * 60 * 1000,   // a finished month never changes again
+    thisMonth: 60 * 1000,
+    holidays: 12 * 60 * 60 * 1000,
+    leave: 30 * 60 * 1000
+  };
+
+  function cacheFetch(key, ttlMs, fetcher) {
+    var hit = _memo[key];
+    if (hit && (Date.now() - hit.ts) < ttlMs) return Promise.resolve(hit.v);
+    if (_inflight[key]) return _inflight[key];
+
+    var storeKey = 'cache_' + key;
+    var p = new Promise(function (resolve) {
+      chrome.storage.local.get([storeKey], function (o) {
+        var stored = o[storeKey];
+        if (stored && (Date.now() - stored.ts) < ttlMs) {
+          _memo[key] = stored;
+          delete _inflight[key];
+          resolve(stored.v);
+          return;
+        }
+        fetcher().then(function (v) {
+          var rec = { ts: Date.now(), v: v };
+          _memo[key] = rec;
+          var put = {}; put[storeKey] = rec;
+          chrome.storage.local.set(put);
+          delete _inflight[key];
+          resolve(v);
+        }).catch(function () {
+          delete _inflight[key];
+          resolve(stored ? stored.v : null);   // stale beats blank
+        });
+      });
+    });
+    _inflight[key] = p;
+    return p;
+  }
+
+  /** Month rows, cached. Finished months are kept for a week. */
+  function month(m, y) {
+    var now = new Date();
+    var isCurrent = (m === now.getMonth() + 1 && y === now.getFullYear());
+    return cacheFetch('m' + y + '-' + m, isCurrent ? TTL.thisMonth : TTL.pastMonth, function () {
+      return fetchMonth(m, y).then(function (r) { return r.loggedOut ? null : r.days; });
+    }).then(function (v) { return v || []; });
+  }
+
+  function holidays(year) {
+    return cacheFetch('h' + year, TTL.holidays, function () {
+      return fetchHolidays(year).then(function (r) { return r.loggedOut ? null : r.holidays; });
+    }).then(function (v) { return v || []; });
+  }
+
+  function leave(m, y) {
+    return cacheFetch('l' + y + '-' + m, TTL.leave, function () {
+      return fetchLeave(m, y).then(function (r) { return r.loggedOut ? null : r.leaves; });
+    }).then(function (v) { return v || []; });
+  }
+
+  /** Drop every cached page so the next read goes to the portal. */
+  function clearCache() {
+    _memo = {}; _inflight = {};
+    return new Promise(function (resolve) {
+      chrome.storage.local.get(null, function (all) {
+        var kill = Object.keys(all).filter(function (k) { return k.indexOf('cache_') === 0; });
+        if (!kill.length) { resolve(0); return; }
+        chrome.storage.local.remove(kill, function () { resolve(kill.length); });
+      });
+    });
+  }
+
   /* ---------------------------------------------------------- HTML -> data -- */
 
   function looksLoggedOut(doc) {
@@ -265,15 +360,17 @@
   /** Everything needed to render today: the row plus its segment breakdown. */
   function fetchToday() {
     var d = new Date();
-    return fetchMonth(d.getMonth() + 1, d.getFullYear()).then(function (res) {
-      if (res.loggedOut) return { loggedOut: true };
+    // Goes through the shared month cache, so the dashboard panels and the
+    // attendance page reuse this one response instead of each fetching it.
+    return month(d.getMonth() + 1, d.getFullYear()).then(function (days) {
+      if (!days.length) return { loggedOut: false, row: null, segments: [], month: [] };
       var key = todayDMY(d);
       var row = null;
-      for (var i = 0; i < res.days.length; i++) if (res.days[i].date === key) row = res.days[i];
-      if (!row) return { loggedOut: false, row: null, segments: [], month: res.days };
-      if (!row.detailId) return { loggedOut: false, row: row, segments: [], month: res.days };
+      for (var i = 0; i < days.length; i++) if (days[i].date === key) row = days[i];
+      if (!row) return { loggedOut: false, row: null, segments: [], month: days };
+      if (!row.detailId) return { loggedOut: false, row: row, segments: [], month: days };
       return fetchDay(row.detailId).then(function (dr) {
-        return { loggedOut: false, row: row, segments: dr.segments, month: res.days };
+        return { loggedOut: dr.loggedOut, row: row, segments: dr.segments, month: days };
       });
     });
   }
@@ -312,6 +409,7 @@
     }
 
     var open = null;
+    var lunchTaken = false;
     for (var i = 0; i < segments.length; i++) {
       var s = segments[i];
       if (s.stop == null) {
@@ -321,30 +419,53 @@
         out.workedClosed += s.stop - s.start;
       }
       if (i > 0 && segments[i - 1].stop != null) {
-        var gap = s.start - segments[i - 1].stop;
-        if (gap > 0) { out.breaks += gap; out.longestBreak = Math.max(out.longestBreak, gap); }
+        var gapStart = segments[i - 1].stop, gapEnd = s.start;
+        var gap = gapEnd - gapStart;
+        if (gap > 0) {
+          out.breaks += gap;
+          out.longestBreak = Math.max(out.longestBreak, gap);
+          if (overlapsLunch(gapStart, gapEnd, gap, cfg)) lunchTaken = true;
+        }
       }
     }
     out.worked += out.workedClosed;
 
     var last = segments[segments.length - 1];
 
+    // A break running now, inside the lunch window, is lunch happening.
+    if (!open && last.stop != null && overlapsLunch(last.stop, Math.max(now, last.stop), now - last.stop, cfg)) {
+      lunchTaken = true;
+    }
+    out.lunchTaken = lunchTaken;
+
+    // Lunch still ahead of you is time you will not be working, so the leaving
+    // time has to be pushed out by it. Small breaks are deliberately not
+    // predicted — they only count once taken.
+    out.pendingLunch = (!lunchTaken && now < cfg.lunchWindowEnd) ? cfg.expectedLunchMinutes : 0;
+
     if (row && row.clockOut != null) {
       out.state = 'done';
       out.worked = row.total != null ? row.total : out.workedClosed;
+      out.pendingLunch = 0;
     } else if (open) {
       out.state = 'working';
-      out.targetOut = open.start + (cfg.requiredMinutes - out.workedClosed);
+      out.targetOut = open.start + (cfg.requiredMinutes - out.workedClosed) + out.pendingLunch;
     } else {
       out.state = 'break';
       out.onBreakSince = last.stop;
       out.breakSoFar = Math.max(0, now - last.stop);
-      out.resumeTarget = now + (cfg.requiredMinutes - out.worked);
+      out.resumeTarget = now + (cfg.requiredMinutes - out.worked) + out.pendingLunch;
     }
 
     out.remaining = Math.max(0, cfg.requiredMinutes - out.worked);
     out.short = Math.max(0, cfg.requiredMinutes - out.worked);
     return out;
+  }
+
+  /** A gap counts as lunch if it is substantial and lands in the lunch window. */
+  function overlapsLunch(gapStart, gapEnd, gap, cfg) {
+    if (gap < 15) return false;
+    return gapStart < cfg.lunchWindowEnd && gapEnd > cfg.lunchWindowStart;
   }
 
   /* ------------------------------------------------------------ analytics -- */
@@ -849,6 +970,11 @@
     fetchMonth: fetchMonth,
     fetchDay: fetchDay,
     fetchToday: fetchToday,
+    cacheFetch: cacheFetch,
+    clearCache: clearCache,
+    month: month,
+    holidays: holidays,
+    leave: leave,
     computeLive: computeLive,
     summarize: summarize,
     median: median,

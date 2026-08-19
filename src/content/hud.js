@@ -46,7 +46,7 @@
     shadow.querySelector('.sync').onclick = function () {
       var b = shadow.querySelector('.sync');
       b.textContent = 'Syncing…';
-      PUMP.refresh().then(function () { b.textContent = 'Refresh'; });
+      PUMP.refresh(true).then(function () { b.textContent = 'Refresh'; });
     };
 
     if (cfg.hudCollapsed) {
@@ -205,7 +205,8 @@
       body.innerHTML =
         '<div class="hero"><span class="big">' + J.fmtClock(l.targetOut) + '</span><span class="unit">clock-out target</span></div>' +
         '<div class="caption">Leave at or after this to clear ' + J.fmtDurShort(required) + '. <b>' +
-        J.fmtDur(l.remaining) + '</b> to go.</div>' +
+        J.fmtDur(l.remaining) + '</b> of work to go' +
+        (l.pendingLunch ? ', plus <b>' + J.fmtDur(l.pendingLunch) + '</b> lunch' : '') + '.</div>' +
         '<div class="bar"><i class="warn" style="width:' + progress + '%"></i></div>' +
         '<div class="barlabels"><span>' + J.fmtDurShort(l.worked) + ' worked</span><span>' + J.fmtDurShort(required) + ' required</span></div>' +
         '<div class="grid">' +

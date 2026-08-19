@@ -45,19 +45,47 @@
       worked: Math.round(l.worked), breaks: Math.round(l.breaks),
       breakSoFar: Math.round(l.breakSoFar), remaining: Math.round(l.remaining),
       targetOut: l.targetOut,
+      pendingLunch: Math.round(l.pendingLunch || 0),
       shiftStart: cfg.shiftStart, graceMinutes: cfg.graceMinutes,
       requiredMinutes: cfg.requiredMinutes
     });
   }
 
-  function refresh() {
-    return J.fetchToday().then(function (r) {
+  /**
+   * Paint before the network. Today's segments are stable — a clock-in at 08:27
+   * is still 08:27 a page load later — so recomputing yesterday's cached copy
+   * against the current clock gives the correct answer immediately, and the
+   * refresh behind it only ever confirms or corrects it.
+   */
+  function paintFromCache() {
+    return J.cacheGet('todayRaw', null).then(function (raw) {
+      if (!raw || raw.date !== J.todayDMY() || data.ts) return false;
+      data.row = raw.row;
+      data.segments = raw.segments || [];
+      data.month = raw.month || [];
+      data.ts = raw.ts;
+      data.fromCache = true;
+      emit();
+      return true;
+    });
+  }
+
+  /** force=true drops every cached page first, for a user-initiated refresh. */
+  function refresh(force) {
+    var pre = force ? J.clearCache() : Promise.resolve();
+    return pre.then(function () { return J.fetchToday(); }).then(function (r) {
       if (r.loggedOut) { data.loggedOut = true; emit(); return; }
       data.loggedOut = false;
       data.row = r.row;
       data.segments = r.segments || [];
       data.month = r.month || [];
       data.ts = Date.now();
+      data.fromCache = false;
+
+      J.cacheSet('todayRaw', {
+        date: J.todayDMY(), ts: data.ts,
+        row: data.row, segments: data.segments, month: data.month
+      });
 
       // Derive the real shift window from the user's own rows, once.
       if (!cfg.calibrated && data.month.length) {
@@ -107,7 +135,7 @@
       reply({ ok: true });
       return;
     }
-    if (msg.type === 'REFRESH') { refresh().then(function () { reply({ ok: true }); }); return true; }
+    if (msg.type === 'REFRESH') { refresh(true).then(function () { reply({ ok: true }); }); return true; }
     if (msg.type === 'GET_TODAY') {
       var send = function () { reply({ ok: true, live: live(), cfg: cfg, ts: data.ts, loggedOut: data.loggedOut }); };
       if (Date.now() - data.ts > 60000) refresh().then(send); else send();
@@ -118,6 +146,7 @@
   J.getSettings().then(function (c) {
     cfg = c;
     readyResolve(cfg);
+    paintFromCache();
     refresh().then(consumePendingAction);
     setInterval(tick, 20000);
     setInterval(refresh, 90000);

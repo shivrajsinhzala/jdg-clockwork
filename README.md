@@ -72,6 +72,17 @@ later, immediately. The target is anchored to the start of your current work
 segment, so it is a fixed wall-clock time — it does not creep as the minutes
 pass.
 
+**Lunch is counted before you take it.** Lunch is a fixture of the day, so a
+leaving time worked out at 10 a.m. that ignores it is simply wrong — it would
+have you leaving an hour short. Clockwork adds the lunch still ahead of you and
+says so: *"2h 36m of work to go, plus the 55m lunch still ahead."* Once a break
+lands in the lunch window it stops being a prediction and starts being a fact,
+and nothing is double-counted.
+
+Small breaks are **never** assumed. They are unpredictable — sometimes taken,
+sometimes skipped to leave earlier — so they only count once actually taken.
+The lunch window and length are editable in the popup.
+
 ### 4. The dashboard calendar, marked up
 
 Days you were on time go green, days flagged Late go red, and Early Exits get a
@@ -90,15 +101,18 @@ Days you were on time go green, days flagged Late go red, and Early Exits get a
 - A warning line if any of that month's rows are internally inconsistent (see
   below).
 
-### 6. Month outlook — where your hours land
+### 6. Month outlook — the days that came up short
 
-Under the Today card: your net vs 8h/day so far, your typical daily delta
-(median, so one long day does not flatter it), how many working days are left in
-the month once weekends and holidays are removed, and the projected month-end
-balance.
+JDG does not allow or pay overtime; extra hours are occasionally recognised with
+a half day, at management's discretion. So a running "banked" balance would be
+reporting credit that does not exist. The card leads with the end that actually
+carries a consequence:
 
-> **+4h 39m** is where August ends up if the remaining 9 working days look like
-> your usual one.
+> **2** days came in under 8:00 this month, **30m** short in total.
+> Typical day **8:15** · Typical arrival **8:19 AM** · Extra time given **2h 31m** *(unpaid, not banked)*
+
+Extra time is still shown, as a plain figure rather than a balance — it is worth
+knowing how much unpaid time you are giving, even though you cannot draw on it.
 
 It also carries the next leave day worth taking (see below).
 
@@ -282,6 +296,29 @@ will not clock you out because the clock reached some hour. Automating attendanc
 events would be falsifying a record. What it automates is the *dropdown*, not the
 decision.
 
+### Why it appears instantly
+
+The portal is server-rendered HTML with no JSON API, and a naive version of this
+extension asks for about ten pages on every load — the month, today's segments,
+four months of history, two years of holidays, leave — before anything appears.
+That is the wait. Two things remove it:
+
+- **Paint before the network.** Today's segments are stable: a clock-in at 08:27
+  is still 08:27 a page load later. The last known payload is kept in
+  `chrome.storage`, recomputed against the current clock, and rendered
+  immediately; the refresh behind it only confirms or corrects. Verified by
+  recomputing the cached payload and the live one side by side — same state,
+  same clock-out target, to the minute.
+- **One shared, persistent cache.** Every panel goes through `J.month()` /
+  `J.holidays()` / `J.leave()`, which memoise per page, share a single in-flight
+  request between simultaneous callers, and persist to `chrome.storage`. A
+  finished month never changes, so it is kept for a week; holidays for twelve
+  hours; leave for thirty minutes; the current month for a minute.
+
+A warm page load usually needs no network at all. Refresh in the popup (or on
+the HUD) clears the cache and re-reads everything, so a stale entry is never a
+dead end.
+
 ### Why fetches live in the content script
 
 The Laravel session cookie is `SameSite=Lax`. A request originating from the
@@ -335,10 +372,11 @@ pulled from the portal).
 python -m http.server 8777
 ```
 
-- `http://127.0.0.1:8777/test/` — 103 integration checks over parsing, time
+- `http://127.0.0.1:8777/test/` — 120 integration checks over parsing, time
   maths, live-day computation, statistical robustness, calendar/holiday maths,
   leave-bridge ranking, the month forecast, regularization ranking, the break
-  budget, the one-click pause rules, leave/half-day parsing and chart output — plus the HUD booting against the fixture and a
+  budget, the one-click pause rules, leave/half-day parsing, lunch-aware
+  clock-out targets, the shared cache and chart output — plus the HUD booting against the fixture and a
   button to open the Insights overlay
 - `http://127.0.0.1:8777/test/popup.html` — the real popup rendered in each of
   its seven states
@@ -388,6 +426,8 @@ the dashboard panel and the HUD can never show different numbers.
 | Lunch break from / until | 12:30 / 15:30 | outside this a pause is a small break |
 | Clock out from | 17:00 | button switches to clock-out; always confirms |
 | Half day — leave from | 12:00 | only on an approved 0.5-day leave |
+| Lunch usually starts / back by | 13:20 / 14:45 | window used to spot lunch in your segments |
+| Lunch length | 55 min | added to the leaving time until lunch is taken |
 | Today panel on the dashboard | on | |
 | Mark late days on the calendar | on | |
 | Month summary + vs-8h column | on | attendance page |

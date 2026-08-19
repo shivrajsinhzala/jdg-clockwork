@@ -33,9 +33,7 @@
       d.setMonth(d.getMonth() - 1);
     }
     historyP = Promise.all(specs.map(function (s) {
-      return J.fetchMonth(s.month, s.year)
-        .then(function (r) { return r.loggedOut ? [] : r.days; })
-        .catch(function () { return []; });
+      return J.month(s.month, s.year).catch(function () { return []; });
     })).then(function (chunks) {
       var seen = {};
       chunks.forEach(function (c) { c.forEach(function (d) { seen[d.date] = d; }); });
@@ -49,12 +47,9 @@
   function holidays() {
     if (holidaysP) return holidaysP;
     var y = new Date().getFullYear();
-    holidaysP = Promise.all([J.fetchHolidays(y), J.fetchHolidays(y + 1)])
-      .then(function (rs) {
-        var out = [];
-        rs.forEach(function (r) { if (!r.loggedOut) out = out.concat(r.holidays); });
-        return out;
-      }).catch(function () { return []; });
+    holidaysP = Promise.all([J.holidays(y), J.holidays(y + 1)])
+      .then(function (rs) { return [].concat(rs[0] || [], rs[1] || []); })
+      .catch(function () { return []; });
     return holidaysP;
   }
 
@@ -98,8 +93,14 @@
     var monthName = new Date(todayISO + 'T00:00:00')
       .toLocaleDateString(undefined, { month: 'long' });
 
-    var projCls = f.projectedNet >= 0 ? 'ok' : 'bad';
     var sign = function (v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + J.fmtDur(Math.abs(v)); };
+
+    // JDG neither allows nor pays overtime, so a running "banked" balance would
+    // be telling you about credit you do not have. What matters is the opposite
+    // end: how often a day came in under the requirement.
+    var summary = J.summarize(monthDays, cfg);
+    var shortDays = summary.earlyExits;
+    var extra = summary.overtime;
 
     var card = document.getElementById('jdgc-outlook');
     if (!card) {
@@ -114,20 +115,26 @@
 
     card.innerHTML =
       '<h3>Month outlook</h3>' +
-      '<div class="jdgc-sub">Projected from the ' + f.daysCounted + ' day' + (f.daysCounted === 1 ? '' : 's') +
-      ' you have already completed this month.</div>' +
+      '<div class="jdgc-sub">' + monthName + ' so far — ' + f.daysCounted + ' day' +
+      (f.daysCounted === 1 ? '' : 's') + ' completed, ' + f.remainingWorkdays + ' working day' +
+      (f.remainingWorkdays === 1 ? '' : 's') + ' left to ' + J.isoLabel(f.monthEnd) + '.</div>' +
       '<div class="jdgc-today">' +
       '<div class="jdgc-main">' +
-      '<div class="jdgc-hero jdgc-num ' + projCls + '">' + sign(f.projectedNet) + '</div>' +
-      '<div class="jdgc-herolbl">is where ' + monthName + ' ends up if the remaining ' +
-      f.remainingWorkdays + ' working day' + (f.remainingWorkdays === 1 ? '' : 's') +
-      ' look like your usual one.</div>' +
+      '<div class="jdgc-hero jdgc-num ' + (shortDays ? 'bad' : 'ok') + '">' + shortDays + '</div>' +
+      '<div class="jdgc-herolbl">' + (shortDays
+        ? 'day' + (shortDays === 1 ? '' : 's') + ' came in under ' + J.fmtDurShort(cfg.requiredMinutes) +
+          ' this month, <b>' + J.fmtDur(summary.minutesShort) + '</b> short in total.'
+        : 'days under ' + J.fmtDurShort(cfg.requiredMinutes) + ' this month — every day complete.') +
+      '</div>' +
       '</div>' +
       '<div class="jdgc-stats">' +
-      stat('Banked so far', sign(f.netSoFar), f.netSoFar >= 0 ? 'ok' : 'bad') +
-      stat('Typical day', sign(f.typicalDelta), f.typicalDelta >= 0 ? 'ok' : 'warn', 'vs ' + J.fmtDurShort(cfg.requiredMinutes)) +
-      stat('Days left', f.remainingWorkdays, '', 'to ' + J.isoLabel(f.monthEnd)) +
-      stat('Early exits', f.earlyExits, f.earlyExits ? 'warn' : 'ok', 'this month') +
+      stat('Typical day', J.fmtDurShort(summary.avgWorked != null ? summary.avgWorked : 0),
+        summary.avgWorked != null && summary.avgWorked >= cfg.requiredMinutes ? 'ok' : 'warn',
+        'need ' + J.fmtDurShort(cfg.requiredMinutes)) +
+      stat('Typical arrival', J.fmtClock(cfg.shiftStart + summary.medianLate),
+        summary.medianLate >= cfg.graceMinutes ? 'bad' : summary.medianLate ? 'warn' : 'ok',
+        summary.hardLate + ' flagged Late') +
+      stat('Extra time given', J.fmtDur(extra), '', 'unpaid, not banked') +
       '</div></div>' +
       (best
         ? '<div style="margin-top:16px;padding-top:14px;border-top:1px solid #eef2f7;font-size:12.5px;color:#52627a">' +
@@ -159,9 +166,9 @@
     if (!/^\/attendance\/?$/.test(location.pathname)) return;
 
     var dm = displayedMonth();
-    J.fetchMonth(dm.month, dm.year).then(function (r) {
-      if (r.loggedOut || !r.days.length) return;
-      var items = J.regularizationCandidates(r.days, cfg);
+    J.month(dm.month, dm.year).then(function (days) {
+      if (!days || !days.length) return;
+      var items = J.regularizationCandidates(days, cfg);
       var card = document.getElementById('jdgc-regular');
 
       if (!items.length) {

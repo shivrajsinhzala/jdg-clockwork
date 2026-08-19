@@ -28,16 +28,11 @@
     var specs = monthsBack(n);
     var chain = Promise.resolve([]);
     specs.forEach(function (sp) {
-      var key = sp.year + '-' + sp.month;
       chain = chain.then(function (acc) {
-        // Only the current month can still change; older months are cached.
-        var now = new Date();
-        var isCurrent = sp.month === now.getMonth() + 1 && sp.year === now.getFullYear();
-        if (cache[key] && !isCurrent) return acc.concat(cache[key]);
-        return J.fetchMonth(sp.month, sp.year).then(function (r) {
-          if (r.loggedOut) throw new Error('logged-out');
-          cache[key] = r.days;
-          return acc.concat(r.days);
+        // Shared cache: finished months are kept for a week, so reopening this
+        // panel costs at most one request for the current month.
+        return J.month(sp.month, sp.year).then(function (days) {
+          return acc.concat(days || []);
         });
       });
     });
@@ -164,10 +159,12 @@
       tile('Clean rate', pct(s.cleanRate), s.hardLate + ' days flagged "Late"', verdictClass(s.cleanRate)) +
       tile('Typical arrival', J.fmtClock(cfg.shiftStart + s.medianLate), 'median ' + s.medianLate.toFixed(0) + ' min after start') +
       tile('Early exits', s.earlyExits, J.fmtDur(s.minutesShort) + ' short across full days', s.earlyExits ? 'bad' : 'ok') +
-      tile('Net vs 8h/day', (net >= 0 ? '+' : '−') + J.fmtDur(Math.abs(net)), 'across ' + s.totalWorkedN + ' full days', net >= 0 ? 'ok' : 'bad') +
+      tile('Net vs ' + J.fmtDurShort(cfg.requiredMinutes) + '/day', (net >= 0 ? '+' : '−') + J.fmtDur(Math.abs(net)),
+        'across ' + s.totalWorkedN + ' full days — not a balance you can draw on', net >= 0 ? 'ok' : 'bad') +
       tile('Best on-time streak', s.streakBest + 'd', 'current streak ' + s.streakCurrent + 'd', s.streakBest >= 5 ? 'ok' : '') +
       tile('Average day length', s.avgWorked != null ? J.fmtDurShort(s.avgWorked) : '—', 'requirement ' + J.fmtDurShort(cfg.requiredMinutes)) +
-      tile('Overtime banked', J.fmtDur(s.overtime), 'logged beyond 8h', 'ok');
+      // JDG does not pay overtime. Reported as time given, not credit earned.
+      tile('Extra time given', J.fmtDur(s.overtime), 'beyond ' + J.fmtDurShort(cfg.requiredMinutes) + ' — unpaid, not banked');
 
     var worstDow = s.byDow.slice().filter(function (b) { return b.n >= 3; })
       .sort(function (a, b) { return b.median - a.median; })[0];
@@ -240,6 +237,7 @@
     body.innerHTML = '<div class="loading"><div class="spinner"></div>Pulling ' + n + ' months from the portal…</div>';
     loadRange(n).then(function (days) {
       // Calibrate once against real rows rather than trusting the defaults.
+      if (!days.length) throw new Error('logged-out');
       var cal = J.calibrate(days);
       if (cal.shiftStart != null && cal.confidence >= 3) {
         cfg.shiftStart = cal.shiftStart;

@@ -14,7 +14,6 @@
 
   var J = root.JDG, S = root.JDG_STYLES, PUMP = root.JDG_PUMP;
   var cfg = null;
-  var monthCache = {};      // 'YYYY-M' -> day rows, for the calendar and the table
   var overrideClockOut = false;
 
   /* ------------------------------------------------------------- plumbing -- */
@@ -33,17 +32,9 @@
     document.head.appendChild(st);
   }
 
-  function fetchMonthCached(month, year) {
-    var key = year + '-' + month;
-    var now = new Date();
-    var isCurrent = month === now.getMonth() + 1 && year === now.getFullYear();
-    if (monthCache[key] && !isCurrent) return Promise.resolve(monthCache[key]);
-    return J.fetchMonth(month, year).then(function (r) {
-      if (r.loggedOut) return [];
-      monthCache[key] = r.days;
-      return r.days;
-    }).catch(function () { return monthCache[key] || []; });
-  }
+  // Shared cache: the pump, the calendar and the attendance page all ask for the
+  // same month, and between them that now costs one request.
+  function fetchMonthCached(month, year) { return J.month(month, year); }
 
   function signed(mins) {
     var v = Math.round(mins);
@@ -124,6 +115,9 @@
 
     var c = chipParts(l);
     chipEl.className = 'jdgc jdgc-chip ' + c.cls;
+    chipEl.title = l.pendingLunch
+      ? 'Leaving time includes the ' + J.fmtDur(l.pendingLunch) + ' lunch you have not taken yet. Click for insights.'
+      : 'Open Clockwork insights';
     chipEl.innerHTML =
       '<span class="jdgc-dot"></span>' +
       c.parts.map(function (p, i) {
@@ -142,8 +136,8 @@
   function loadHalfDay() {
     if (halfDayToday !== null) return Promise.resolve(halfDayToday);
     var d = new Date();
-    return J.fetchLeave(d.getMonth() + 1, d.getFullYear()).then(function (r) {
-      halfDayToday = r.loggedOut ? false : J.isHalfDayOn(r.leaves, J.isoToday());
+    return J.leave(d.getMonth() + 1, d.getFullYear()).then(function (leaves) {
+      halfDayToday = J.isHalfDayOn(leaves, J.isoToday());
       return halfDayToday;
     }).catch(function () { halfDayToday = false; return false; });
   }
@@ -363,7 +357,10 @@
         '<div class="jdgc-stats">' +
         statBlock('Shift start', J.fmtClock(cfg.shiftStart)) +
         statBlock('Late mark at', J.fmtClock(cfg.shiftStart + cfg.graceMinutes)) +
-        statBlock('If you clock in now', J.fmtClock(J.nowMinutes() + required + 40) + ' out', 'warn') +
+        // Allow for the lunch still ahead rather than a guessed break allowance.
+        statBlock('If you clock in now',
+          J.fmtClock(J.nowMinutes() + required + (J.nowMinutes() < cfg.lunchWindowEnd ? cfg.expectedLunchMinutes : 0)) + ' out',
+          'warn') +
         '</div></div>';
       return;
     }
@@ -407,7 +404,8 @@
       heroCls = '';
       heroVal = J.fmtClock(l.targetOut);
       heroLbl = 'Clock out at or after this to clear ' + J.fmtDurShort(required) +
-        '. <b>' + J.fmtDur(l.remaining) + '</b> to go.';
+        '. <b>' + J.fmtDur(l.remaining) + '</b> of work to go' +
+        (l.pendingLunch ? ', plus the <b>' + J.fmtDur(l.pendingLunch) + '</b> lunch still ahead' : '') + '.';
     }
 
     card.innerHTML =
@@ -644,7 +642,7 @@
     var key = dm.year + '-' + dm.month;
 
     fetchMonthCached(dm.month, dm.year).then(function (days) {
-      if (!days.length) return;
+      if (!days || !days.length) return;
       var byDate = {};
       days.forEach(function (d) { byDate[d.date] = d; });
 

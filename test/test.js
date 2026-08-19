@@ -43,6 +43,44 @@
   ok('target ignores the passing clock',
     J.computeLive(today, window.FIXTURE_SEGMENTS, 950, cfg).targetOut === 1025);
 
+  /* ---- lunch is a fixture of the day, so the target must allow for it ---- */
+  var LC = {
+    shiftStart: 480, graceMinutes: 16, requiredMinutes: 480,
+    lunchWindowStart: 13 * 60 + 20, lunchWindowEnd: 14 * 60 + 45, expectedLunchMinutes: 55
+  };
+  // Clocked in 08:27, still working at 10:00, lunch not taken yet.
+  var preLunch = J.computeLive(today, [{ start: 507, stop: null, message: '' }], 600, LC);
+  ok('lunch ahead is detected', preLunch.pendingLunch === 55 && !preLunch.lunchTaken, preLunch.pendingLunch);
+  ok('target allows for the coming lunch',
+    preLunch.targetOut === 507 + 480 + 55, J.fmtClock(preLunch.targetOut));
+  ok('without the allowance it would be 55m early',
+    J.computeLive(today, [{ start: 507, stop: null, message: '' }], 600,
+      { shiftStart: 480, graceMinutes: 16, requiredMinutes: 480, lunchWindowStart: 800, lunchWindowEnd: 0, expectedLunchMinutes: 55 }
+    ).targetOut === 507 + 480);
+
+  // Same day after a 13:51-14:29 lunch: it is spent, so nothing more is added.
+  var postLunch = J.computeLive(today, window.FIXTURE_SEGMENTS, 900, LC);
+  ok('a taken lunch is recognised', postLunch.lunchTaken === true);
+  ok('nothing is added once lunch is done', postLunch.pendingLunch === 0, postLunch.pendingLunch);
+  ok('post-lunch target counts only real breaks',
+    postLunch.targetOut === 869 + (480 - 324), J.fmtClock(postLunch.targetOut));
+
+  // A short mid-morning break is not lunch.
+  var smallBreak = J.computeLive(today,
+    [{ start: 507, stop: 660, message: 'SMALL BREAK' }, { start: 670, stop: null, message: '' }], 700, LC);
+  ok('a small break is not mistaken for lunch', smallBreak.lunchTaken === false);
+  ok('lunch still pending after a small break', smallBreak.pendingLunch === 55, smallBreak.pendingLunch);
+
+  // Sitting in the lunch break right now.
+  var atLunch = J.computeLive(today, [{ start: 507, stop: 815, message: 'BREAK TIME' }], 840, LC);
+  ok('lunch in progress counts as taken', atLunch.lunchTaken === true, atLunch.state);
+  ok('resume target does not double-count lunch',
+    atLunch.pendingLunch === 0 && atLunch.resumeTarget === 840 + (480 - 308), J.fmtClock(atLunch.resumeTarget));
+
+  // Late afternoon with no lunch logged: the window has passed, assume none.
+  var noLunchLate = J.computeLive(today, [{ start: 507, stop: null, message: '' }], 960, LC);
+  ok('past the lunch window nothing is assumed', noLunchLate.pendingLunch === 0, noLunchLate.pendingLunch);
+
   var onBreak = J.computeLive(today, [{ start: 507, stop: 831, message: 'BREAK' }], 850, cfg);
   ok('paused day reads as break', onBreak.state === 'break', onBreak.state);
   ok('break elapsed is right', onBreak.breakSoFar === 19, onBreak.breakSoFar);
@@ -214,6 +252,10 @@
   ok('unrelated day is not a half day', J.isHalfDayOn(LEAVE, '2026-08-17') === false);
   ok('pending half day is ignored', J.isHalfDayOn(LEAVE, '2026-09-10') === false);
 
+  /* ---- caching: the fix for waiting on every page load ---- */
+  var calls = 0;
+  var slowFetch = function () { calls++; return Promise.resolve({ n: calls }); };
+
   /* ---- charts produce sane SVG ---- */
   var work = days.filter(function (d) {
     return J.isWorkingDay(d) && d.fullDay &&
@@ -235,25 +277,71 @@
   });
   ok('histogram caps the tail at 60+', svgs.hist.indexOf('60+') !== -1);
 
+  /* ---- caching behaviour (async, appended after the synchronous checks) ---- */
+  function cacheChecks() {
+    var k = 'test' + Math.random().toString(36).slice(2);
+    return J.cacheFetch(k, 60000, slowFetch)
+      .then(function (a) {
+        ok('cacheFetch returns the fetched value', a && a.n === 1, a && a.n);
+        return J.cacheFetch(k, 60000, slowFetch);
+      })
+      .then(function (b) {
+        ok('second read is served from cache, no refetch', calls === 1 && b.n === 1, 'calls=' + calls);
+        // Two panels asking at the same moment must cost one fetch, not two.
+        var k2 = 'test' + Math.random().toString(36).slice(2);
+        var before = calls;
+        return Promise.all([
+          J.cacheFetch(k2, 60000, slowFetch),
+          J.cacheFetch(k2, 60000, slowFetch),
+          J.cacheFetch(k2, 60000, slowFetch)
+        ]).then(function (rs) {
+          ok('concurrent readers share one fetch', calls === before + 1, 'calls went ' + before + ' -> ' + calls);
+          ok('all concurrent readers get the same value',
+            rs[0].n === rs[1].n && rs[1].n === rs[2].n);
+          // A zero TTL must always go back to the source.
+          return J.cacheFetch(k2, 0, slowFetch);
+        });
+      })
+      .then(function () {
+        ok('expired entries refetch', calls >= 3, 'calls=' + calls);
+        return J.cacheFetch('never-set-' + Math.random(), 60000, function () {
+          return Promise.reject(new Error('network down'));
+        });
+      })
+      .then(function (v) {
+        ok('a failed fetch with no cache resolves null rather than throwing', v === null, String(v));
+      });
+  }
+
   /* ---- render ---- */
-  var pass = results.filter(function (r) { return r.pass; }).length;
-  document.getElementById('summary').innerHTML =
-    '<strong>' + pass + ' / ' + results.length + ' checks passed</strong>';
-  document.getElementById('summary').className = pass === results.length ? 'all-pass' : 'has-fail';
-  document.getElementById('results').innerHTML = results.map(function (r) {
-    return '<li class="' + (r.pass ? 'p' : 'f') + '"><span>' + (r.pass ? 'PASS' : 'FAIL') + '</span> ' +
-      r.name + (r.detail ? ' <em>(' + r.detail + ')</em>' : '') + '</li>';
-  }).join('');
-  window.__testResults = results;
+  function paintResults() {
+    var pass = results.filter(function (r) { return r.pass; }).length;
+    document.getElementById('summary').innerHTML =
+      '<strong>' + pass + ' / ' + results.length + ' checks passed</strong>';
+    document.getElementById('summary').className = pass === results.length ? 'all-pass' : 'has-fail';
+    document.getElementById('results').innerHTML = results.map(function (r) {
+      return '<li class="' + (r.pass ? 'p' : 'f') + '"><span>' + (r.pass ? 'PASS' : 'FAIL') + '</span> ' +
+        r.name + (r.detail ? ' <em>(' + r.detail + ')</em>' : '') + '</li>';
+    }).join('');
+    window.__testResults = results;
+  }
+  paintResults();
+  cacheChecks().then(paintResults, function (e) {
+    ok('cache checks ran without throwing', false, String(e));
+    paintResults();
+  });
 
   /* ---- live UI smoke test: point the sources at the fixture, then boot them ---- */
-  J.fetchMonth = function (month, year) {
+  // Stub the cached accessors too — month() calls the internal binding, so
+  // replacing J.fetchMonth on its own would not be observed.
+  var monthOf = function (month, year) {
     var tag = '-' + (month < 10 ? '0' + month : month) + '-' + year;
-    return Promise.resolve({
-      loggedOut: false,
-      days: days.filter(function (d) { return d.date.indexOf(tag) === 2; })
-    });
+    return days.filter(function (d) { return d.date.indexOf(tag) === 2; });
   };
+  J.fetchMonth = function (m, y) { return Promise.resolve({ loggedOut: false, days: monthOf(m, y) }); };
+  J.month = function (m, y) { return Promise.resolve(monthOf(m, y)); };
+  J.holidays = function () { return Promise.resolve([]); };
+  J.leave = function () { return Promise.resolve([]); };
   J.fetchToday = function () {
     return Promise.resolve({ loggedOut: false, row: today, segments: window.FIXTURE_SEGMENTS, month: days });
   };

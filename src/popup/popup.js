@@ -116,7 +116,8 @@
     } else {
       sub.textContent = 'working';
       box.innerHTML = '<div class="hero"><span class="big">' + J.fmtClock(mirror.targetOut) + '</span><span class="unit">clock-out target</span></div>' +
-        '<div class="cap"><b>' + J.fmtDur(remaining) + '</b> to go before you clear 8h.</div>' +
+        '<div class="cap"><b>' + J.fmtDur(remaining) + '</b> of work to go' +
+        (mirror.pendingLunch ? ', plus <b>' + J.fmtDur(mirror.pendingLunch) + '</b> lunch still ahead' : '') + '.</div>' +
         '<div class="bar"><i class="warn" style="width:' + progress + '%"></i></div>' +
         '<div class="barlabels"><span>' + J.fmtDurShort(worked) + ' worked</span><span>' + J.fmtDurShort(required) + '</span></div>' +
         '<div class="grid">' +
@@ -154,7 +155,9 @@
 
   var TOGGLES = ['chipEnabled', 'dashboardCards', 'calendarMarks', 'attendanceEnrich',
     'hudEnabled', 'oneClickPause', 'guardEarlyExit', 'morningAlarms', 'notifyTargetReached'];
-  var TIMES = ['lunchFrom', 'lunchUntil', 'clockOutFrom', 'halfDayOutFrom'];
+  var TIMES = ['lunchFrom', 'lunchUntil', 'clockOutFrom', 'halfDayOutFrom',
+    'lunchWindowStart', 'lunchWindowEnd'];
+  var NUMBERS = ['expectedLunchMinutes'];
 
   function toTimeValue(mins) { return J.pad2(Math.floor(mins / 60)) + ':' + J.pad2(mins % 60); }
   function fromTimeValue(v, fallback) {
@@ -176,6 +179,7 @@
     $('theme').value = cfg.theme || 'light';
     TOGGLES.forEach(function (id) { $(id).checked = !!cfg[id]; });
     TIMES.forEach(function (id) { $(id).value = toTimeValue(cfg[id]); });
+    NUMBERS.forEach(function (id) { $(id).value = cfg[id]; });
     $('calNote').textContent = cfg.calibrated
       ? 'Shift window was detected from your own attendance rows.'
       : 'Using defaults — open the portal once and Clockwork will detect your real shift window.';
@@ -199,6 +203,10 @@
     };
     TOGGLES.forEach(function (id) { patch[id] = $(id).checked; });
     TIMES.forEach(function (id) { patch[id] = fromTimeValue($(id).value, cfg[id]); });
+    NUMBERS.forEach(function (id) {
+      var n = parseInt($(id).value, 10);
+      patch[id] = isNaN(n) ? cfg[id] : n;
+    });
 
     J.setSettings(patch).then(function (c) {
       cfg = c;
@@ -243,6 +251,6 @@
   };
 
   ['shiftStart', 'requiredHours', 'grace', 'breakWarn', 'leads', 'theme']
-    .concat(TOGGLES).concat(TIMES)
+    .concat(TOGGLES).concat(TIMES).concat(NUMBERS)
     .forEach(function (id) { $(id).addEventListener('change', save); });
 })();

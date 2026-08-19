@@ -114,13 +114,14 @@
     var today = days[days.length - 1];
 
     // Point the real sources at the fixture before the pump starts.
-    J.fetchMonth = function (month, year) {
+    // Stub at the cache layer as well as the raw fetch: month()/holidays()/leave()
+    // call the internal bindings, so replacing J.fetchMonth alone would not be seen.
+    var monthOf = function (month, year) {
       var tag = '-' + (month < 10 ? '0' + month : month) + '-' + year;
-      return Promise.resolve({
-        loggedOut: false,
-        days: days.filter(function (d) { return d.date.indexOf(tag) === 2; })
-      });
+      return days.filter(function (d) { return d.date.indexOf(tag) === 2; });
     };
+    J.fetchMonth = function (m, y) { return Promise.resolve({ loggedOut: false, days: monthOf(m, y) }); };
+    J.month = function (m, y) { return Promise.resolve(monthOf(m, y)); };
     J.fetchToday = function () {
       return Promise.resolve({
         loggedOut: false, row: today, segments: window.FIXTURE_SEGMENTS,
@@ -143,17 +144,19 @@
         ? J.parseHolidaysHTML(HOLIDAY_HTML)
         : { loggedOut: false, holidays: [] });
     };
+    J.holidays = function (year) {
+      return Promise.resolve(year === 2026 ? J.parseHolidaysHTML(HOLIDAY_HTML).holidays : []);
+    };
     // ?halfday puts an approved 0.5-day leave on today.
     var HALF = /(\?|&)halfday/.test(location.search);
-    J.fetchLeave = function () {
-      return Promise.resolve({
-        loggedOut: false,
-        leaves: HALF
-          ? [{ from: J.isoToday(), to: J.isoToday(), kind: 'medical leave', paid: 'paid', days: 0.5,
-               status: '✓ Approved', approved: true }]
-          : []
-      });
+    var leavesOf = function () {
+      return HALF
+        ? [{ from: J.isoToday(), to: J.isoToday(), kind: 'medical leave', paid: 'paid', days: 0.5,
+             status: '✓ Approved', approved: true }]
+        : [];
     };
+    J.fetchLeave = function () { return Promise.resolve({ loggedOut: false, leaves: leavesOf() }); };
+    J.leave = function () { return Promise.resolve(leavesOf()); };
 
     // Record submits instead of navigating, so the harness can assert on them.
     window.__submitted = [];

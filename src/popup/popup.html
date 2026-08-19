@@ -52,6 +52,22 @@
         <span>Half day — leave from</span>
         <input type="time" id="halfDayOutFrom">
       </label>
+
+      <div class="grouphdr">Lunch</div>
+      <label>
+        <span>Lunch usually starts</span>
+        <input type="time" id="lunchWindowStart">
+      </label>
+      <label>
+        <span>…and is back by</span>
+        <input type="time" id="lunchWindowEnd">
+      </label>
+      <label>
+        <span>Lunch length (min)</span>
+        <input type="number" id="expectedLunchMinutes" min="0" max="180" step="5">
+      </label>
+      <p class="fine">Your leaving time allows for a lunch you have not taken yet. Small breaks
+        are never assumed — they only count once you actually take them.</p>
       <p class="fine">Before lunch and after it, a pause is logged as SMALL BREAK. Clocking out always
         asks for confirmation first.</p>
 
